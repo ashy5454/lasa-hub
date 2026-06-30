@@ -42,7 +42,7 @@ const STATUS_ICONS: Record<OrderStatus, string> = {
 export default function OrderDetailScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { orders, submitOrderRating } = useOrders();
   const order = orders.find(o => o.id === id);
