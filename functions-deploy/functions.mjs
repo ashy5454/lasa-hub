@@ -35448,7 +35448,7 @@ app.use("/api", routes_default);
 var app_default = app;
 
 // functions.ts
-var api = onRequest({ timeoutSeconds: 60, memory: "512MiB" }, app_default);
+var api = onRequest({ invoker: "public", timeoutSeconds: 60, memory: "512MiB" }, app_default);
 export {
   api
 };
