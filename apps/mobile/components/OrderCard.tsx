@@ -28,11 +28,15 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   cancelled: "#DC2626",
 };
 
-function getAgeMinutes(createdAt: string | number): number {
-  return (Date.now() - new Date(createdAt).getTime()) / 60000;
+function getAgeMinutes(createdAt: string | number | undefined | null): number {
+  if (!createdAt) return 0;
+  const ms = new Date(createdAt as any).getTime();
+  if (isNaN(ms)) return 0;
+  return (Date.now() - ms) / 60000;
 }
 
-function relativeTime(createdAt: string | number): string {
+function relativeTime(createdAt: string | number | undefined | null): string {
+  if (!createdAt) return "";
   const mins = getAgeMinutes(createdAt);
   if (mins < 1) return "just now";
   if (mins < 60) return `${Math.floor(mins)}m ago`;

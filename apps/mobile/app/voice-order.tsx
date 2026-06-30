@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import Animated, { FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLanguage } from "@/context/LanguageContext";
@@ -46,6 +46,8 @@ export default function VoiceOrderScreen() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [permissionState, setPermissionState] = useState<"unknown" | "granted" | "denied">("unknown");
+  const [manualText, setManualText] = useState("");
+  const [showManualInput, setShowManualInput] = useState(Platform.OS !== "web");
 
   // Refs are critical: the `onresult` callback closes over state at the moment
   // it's registered, so reading `transcript` from state after stop gives the
@@ -241,6 +243,36 @@ export default function VoiceOrderScreen() {
     };
   }, []);
 
+  const handleManualSubmit = async () => {
+    const text = manualText.trim();
+    if (!text) return;
+    setIsProcessing(true);
+    setParseError(null);
+    try {
+      const result = await apiPost<{ items: any[]; sourceLanguage: string | null }>(
+        "/api/ai/parse-voice",
+        { transcript: text, language },
+      );
+      if (Array.isArray(result.items) && result.items.length > 0) {
+        const items: ParsedItem[] = result.items.map((i: any) => ({
+          name: i.name ?? "Item",
+          nameTe: i.nameTe ?? "",
+          nameHi: i.nameHi ?? "",
+          sourceLanguage: (result.sourceLanguage as any) ?? null,
+          quantity: i.quantity ?? "1",
+          available: true,
+        }));
+        setParsedItems(items);
+      } else {
+        throw new Error("AI returned no items");
+      }
+    } catch (err: any) {
+      setParseError(`Couldn't parse: ${err?.message ?? "unknown"}. Try again.`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleProceed = () => {
     if (!parsedItems) return;
     const encoded = encodeURIComponent(JSON.stringify(parsedItems));
@@ -299,6 +331,41 @@ export default function VoiceOrderScreen() {
                 <Text style={[styles.transcriptText, { color: colors.foreground }]}>{transcript}</Text>
               </View>
             ) : null}
+
+            {/* Manual text fallback — always shown on native, toggleable on web */}
+            {(showManualInput || Platform.OS !== "web") && (
+              <View style={[styles.manualBox, { borderColor: colors.border, backgroundColor: colors.secondary }]}>
+                <Text style={[styles.manualLabel, { color: colors.mutedForeground }]}>
+                  {language === "te" ? "లేదా ఇక్కడ టైప్ చేయండి:" : language === "hi" ? "या यहाँ टाइप करें:" : "Or type your order here:"}
+                </Text>
+                <TextInput
+                  style={[styles.manualInput, { borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
+                  placeholder={language === "te" ? "ఉదా: 5 కిలో బియ్యం, 2 కిలో పప్పు" : language === "hi" ? "उदा: 5 किलो चावल, 2 किलो दाल" : "e.g. 5 kg rice, 2 kg dal, 1 oil bottle"}
+                  placeholderTextColor={colors.mutedForeground}
+                  value={manualText}
+                  onChangeText={setManualText}
+                  multiline
+                  numberOfLines={3}
+                />
+                <TouchableOpacity
+                  style={[styles.manualBtn, { backgroundColor: manualText.trim() ? colors.primary : colors.border }]}
+                  onPress={handleManualSubmit}
+                  disabled={!manualText.trim()}
+                >
+                  <Feather name="arrow-right" size={18} color="#FFF" />
+                  <Text style={styles.manualBtnText}>
+                    {language === "te" ? "విశ్లేషించండి" : language === "hi" ? "विश्लेषण करें" : "Parse order"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {Platform.OS === "web" && !showManualInput && (
+              <TouchableOpacity onPress={() => setShowManualInput(true)} style={styles.manualToggle}>
+                <Text style={[styles.manualToggleText, { color: colors.mutedForeground }]}>
+                  {language === "te" ? "బదులుగా టైప్ చేయండి" : language === "hi" ? "टाइप करें" : "Type instead"}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.micContainer}>
               <Animated.View style={pulseStyle}>
@@ -406,4 +473,11 @@ const styles = StyleSheet.create({
   proceedBtnText: { color: "#FFF", fontSize: 17, fontFamily: "Inter_700Bold" },
   retakeBtn: { alignItems: "center", paddingVertical: 12 },
   retakeText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  manualBox: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
+  manualLabel: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  manualInput: { borderWidth: 1, borderRadius: 10, padding: 10, fontSize: 14, fontFamily: "Inter_400Regular", minHeight: 80, textAlignVertical: "top" },
+  manualBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 46, borderRadius: 12 },
+  manualBtnText: { color: "#FFF", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  manualToggle: { paddingVertical: 6 },
+  manualToggleText: { fontSize: 13, fontFamily: "Inter_400Regular", textDecorationLine: "underline" },
 });

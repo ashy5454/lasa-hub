@@ -45,6 +45,7 @@ export default function ReviewScreen() {
   useEffect(() => { refreshWholesalers(); }, [refreshWholesalers]);
 
   const [showSupplierPicker, setShowSupplierPicker] = useState(false);
+  const [wholesalerSearch, setWholesalerSearch] = useState("");
   const params = useLocalSearchParams<{ items?: string; mode?: string }>();
 
   const [items, setItems] = useState<OrderItem[]>([]);
@@ -648,8 +649,31 @@ export default function ReviewScreen() {
           <View style={[styles.modalSheet, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
             <Text style={[styles.modalTitle, { color: colors.foreground }]}>{t("chooseSupplier")}</Text>
+            {/* Search bar */}
+            <View style={[styles.searchRow, { borderColor: colors.border, backgroundColor: colors.secondary }]}>
+              <Feather name="search" size={16} color={colors.mutedForeground} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.foreground }]}
+                placeholder="Search by name or location…"
+                placeholderTextColor={colors.mutedForeground}
+                value={wholesalerSearch}
+                onChangeText={setWholesalerSearch}
+                autoCapitalize="none"
+              />
+              {wholesalerSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setWholesalerSearch("")}>
+                  <Feather name="x" size={15} color={colors.mutedForeground} />
+                </TouchableOpacity>
+              )}
+            </View>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {wholesalers.map(ws => (
+              {wholesalers
+                .filter(ws => {
+                  const q = wholesalerSearch.toLowerCase();
+                  if (!q) return true;
+                  return ws.name.toLowerCase().includes(q) || (ws.location ?? "").toLowerCase().includes(q);
+                })
+                .map(ws => (
                 <TouchableOpacity
                   key={ws.id}
                   style={[
@@ -698,7 +722,7 @@ export default function ReviewScreen() {
             </ScrollView>
             <TouchableOpacity
               style={[styles.modalCloseBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
-              onPress={() => setShowWholesalerModal(false)}
+              onPress={() => { setShowWholesalerModal(false); setWholesalerSearch(""); }}
             >
               <Text style={[styles.modalCloseBtnText, { color: colors.foreground }]}>{t("cancel")}</Text>
             </TouchableOpacity>
@@ -896,4 +920,6 @@ const styles = StyleSheet.create({
 
   selectSupplierBtn: { height: 54, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   selectSupplierBtnText: { color: "#FFF", fontSize: 16, fontFamily: "Inter_700Bold" },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8 },
+  searchInput: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular" },
 });

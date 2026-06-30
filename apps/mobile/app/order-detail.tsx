@@ -5,6 +5,7 @@ import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View }
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StockIndicator } from "@/components/StockIndicator";
+import { OrderTracker } from "@/components/OrderTracker";
 import { useLanguage } from "@/context/LanguageContext";
 import { useOrders, type OrderStatus } from "@/context/OrderContext";
 import { useColors } from "@/hooks/useColors";
@@ -14,6 +15,7 @@ import { LasaLogo } from "@/components/LasaLogo";
 const STATUS_KEYS: Record<OrderStatus, TranslationKey> = {
   pending: "statusPending",
   confirmed: "statusConfirmed",
+  packed: "statusConfirmed",
   out_for_delivery: "statusOutForDelivery",
   delivered: "statusDelivered",
   cancelled: "statusCancelled",
@@ -22,6 +24,7 @@ const STATUS_KEYS: Record<OrderStatus, TranslationKey> = {
 const STATUS_COLORS: Record<OrderStatus, string> = {
   pending: "#D97706",
   confirmed: "#2563EB",
+  packed: "#0EA5E9",
   out_for_delivery: "#7C3AED",
   delivered: "#16A34A",
   cancelled: "#DC2626",
@@ -30,8 +33,9 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
 const STATUS_ICONS: Record<OrderStatus, string> = {
   pending: "clock",
   confirmed: "check-circle",
+  packed: "package",
   out_for_delivery: "truck",
-  delivered: "package",
+  delivered: "check-square",
   cancelled: "x-circle",
 };
 
@@ -92,6 +96,22 @@ export default function OrderDetailScreen() {
             </Text>
           </View>
         </Animated.View>
+
+        {/* Order Tracker */}
+        {order.status !== "cancelled" && (
+          <Animated.View
+            entering={FadeInDown.delay(120).springify()}
+            style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
+            <Text style={[styles.sectionTitle, { color: colors.foreground, marginBottom: 0 }]}>Order progress</Text>
+            <OrderTracker status={order.status} language={language} />
+            {order.status === "pending" && (
+              <Text style={[styles.trackerHint, { color: colors.mutedForeground }]}>
+                Waiting for wholesaler to confirm your order
+              </Text>
+            )}
+          </Animated.View>
+        )}
 
         {/* Delivery & Amount */}
         {(order.deliveryTime || order.totalAmount) && (
@@ -187,6 +207,8 @@ const styles = StyleSheet.create({
   backBtn: { padding: 8 },
   headerTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
   scroll: { flex: 1 },
+  trackerCard: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 4 },
+  trackerHint: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", paddingBottom: 4 },
   content: { padding: 20, gap: 12 },
   statusBanner: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, borderWidth: 1, padding: 16 },
   statusTextBlock: { flex: 1 },

@@ -41,7 +41,9 @@ export default function WholesalerDashboard() {
           (i: any) => i.stockQuantity !== null && i.stockQuantity !== undefined && i.stockQuantity <= (i.minOrderQty ?? 3)
         );
         setLowStock(low);
-      } catch {}
+      } catch (e) {
+        console.warn("[wholesaler] lowStock fetch failed", e);
+      }
     })();
   }, [user]));
 
@@ -53,7 +55,7 @@ export default function WholesalerDashboard() {
     if (o.status !== "delivered") return false;
     const d = new Date(o.createdAt);
     const now = new Date();
-    return d.getDate() === now.getDate() && d.getMonth() === now.getMonth();
+    return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
   const todayRevenue = deliveredToday.reduce((sum, o) => sum + (o.totalAmount ?? 0), 0);
 
@@ -117,7 +119,7 @@ export default function WholesalerDashboard() {
         <View style={[styles.lowStockBar, { borderBottomColor: colors.border }]}>
           <Feather name="alert-triangle" size={13} color="#D97706" />
           <Text style={styles.lowStockLabel}>Low stock:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ gap: 6 }}>
             {lowStock.map((item) => (
               <TouchableOpacity
                 key={item.id}
@@ -217,5 +219,5 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginTop: 8 },
   emptySub: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
   list: { flex: 1 },
-  listContent: { padding: 20 },
+  listContent: { padding: 20, paddingBottom: 100 },
 });

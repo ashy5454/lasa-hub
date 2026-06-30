@@ -192,7 +192,7 @@ export default function ScanOrderScreen() {
           </Animated.View>
         ) : (
           <Animated.View entering={FadeIn.springify()} style={styles.analyzeSection}>
-            <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
+            <Image source={{ uri: imageUri }} style={styles.image} resizeMode="contain" />
 
             {isAnalyzing ? (
               <View style={[styles.analyzingBox, { backgroundColor: colors.secondary }]}>
@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
   galleryBtn: { height: 52, borderRadius: 16, borderWidth: 1.5, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   galleryBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   analyzeSection: { gap: 14 },
-  image: { width: "100%", height: 220, borderRadius: 16 },
+  image: { width: "100%", height: 340, borderRadius: 16, backgroundColor: "#000" },
   analyzingBox: { borderRadius: 16, padding: 28, alignItems: "center", gap: 12 },
   analyzingText: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
   analyzingSubText: { fontSize: 13, fontFamily: "Inter_400Regular" },

@@ -386,7 +386,9 @@ export default function InventoryScreen() {
                         try {
                           const h = getUserHeaders(user!);
                           await apiPatch(`/api/wholesaler/inventory/${item.id}`, { stockQuantity: newQty }, h);
-                        } catch {}
+                        } catch {
+                          setItems(prev => prev.map(i => i.id === item.id ? { ...i, stockQuantity: stock } : i));
+                        }
                       }}
                     >
                       <Feather name="minus" size={14} color={colors.foreground} />
@@ -400,7 +402,9 @@ export default function InventoryScreen() {
                         try {
                           const h = getUserHeaders(user!);
                           await apiPatch(`/api/wholesaler/inventory/${item.id}`, { stockQuantity: newQty }, h);
-                        } catch {}
+                        } catch {
+                          setItems(prev => prev.map(i => i.id === item.id ? { ...i, stockQuantity: stock } : i));
+                        }
                       }}
                     >
                       <Feather name="plus" size={14} color={colors.foreground} />
