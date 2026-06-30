@@ -93,8 +93,6 @@ export default function WholesalerSettings() {
         <LasaLogo size={28} /* logo in top-right keeps brand on every screen */ />
       </View>
 
-      <WholesalerTabBar />
-
       {loading ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
           <ActivityIndicator color={colors.primary} />
@@ -195,6 +193,7 @@ export default function WholesalerSettings() {
           </TouchableOpacity>
         </ScrollView>
       )}
+      <WholesalerTabBar />
     </View>
   );
 }

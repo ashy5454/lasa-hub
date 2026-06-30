@@ -66,8 +66,6 @@ export default function WholesalerInsights() {
         </TouchableOpacity>
       </View>
 
-      <WholesalerTabBar />
-
       {loading ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
           <ActivityIndicator color={colors.primary} />
@@ -190,6 +188,7 @@ export default function WholesalerInsights() {
             )}
         </ScrollView>
       ) : null}
+      <WholesalerTabBar />
     </View>
   );
 }

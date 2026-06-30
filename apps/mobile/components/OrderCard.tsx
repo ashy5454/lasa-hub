@@ -28,36 +28,66 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   cancelled: "#DC2626",
 };
 
+function getAgeMinutes(createdAt: string | number): number {
+  return (Date.now() - new Date(createdAt).getTime()) / 60000;
+}
+
+function relativeTime(createdAt: string | number): string {
+  const mins = getAgeMinutes(createdAt);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${Math.floor(mins)}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / 1440)}d ago`;
+}
+
+function urgencyColor(order: Order): string | null {
+  if (order.status !== "pending") return null;
+  const mins = getAgeMinutes(order.createdAt);
+  if (mins >= 120) return "#DC2626"; // red — >2h
+  if (mins >= 60)  return "#D97706"; // amber — >1h
+  return null;
+}
+
 export function OrderCard({ order, onPress, variant = "kirana", language }: Props) {
   const colors = useColors();
   const statusColor = STATUS_COLORS[order.status];
   const statusLabel = language ? language(STATUS_KEYS[order.status]) : STATUS_KEYS[order.status];
-  const date = new Date(order.createdAt);
-  const timeStr = date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  const dateStr = date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  const urgent = variant === "wholesaler" ? urgencyColor(order) : null;
 
   return (
     <TouchableOpacity
-      style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
+      style={[
+        styles.card,
+        { backgroundColor: colors.card, borderColor: urgent ?? colors.border },
+        urgent ? { borderLeftWidth: 3, borderLeftColor: urgent } : null,
+      ]}
       onPress={onPress}
       activeOpacity={0.75}
     >
       <View style={styles.top}>
         <View style={styles.titleRow}>
-          <View style={[styles.iconBox, { backgroundColor: colors.primary + "15" }]}>
-            <Feather name="shopping-bag" size={18} color={colors.primary} />
+          <View style={[styles.iconBox, { backgroundColor: (urgent ?? colors.primary) + "15" }]}>
+            <Feather name="shopping-bag" size={18} color={urgent ?? colors.primary} />
           </View>
           <View style={styles.titleText}>
             <Text style={[styles.shopName, { color: colors.foreground }]} numberOfLines={1}>
               {variant === "wholesaler" ? order.shopName : `Order #${order.id.slice(-4)}`}
             </Text>
             <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-              {order.items.length} items  •  {dateStr} {timeStr}
+              {order.items.length} items  •  {relativeTime(order.createdAt)}
             </Text>
           </View>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: statusColor + "18" }]}>
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        <View style={styles.rightCol}>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor + "18" }]}>
+            <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+          {urgent && (
+            <View style={[styles.urgentBadge, { backgroundColor: urgent + "18" }]}>
+              <Feather name="clock" size={10} color={urgent} />
+              <Text style={[styles.urgentText, { color: urgent }]}>{relativeTime(order.createdAt)}</Text>
+            </View>
+          )}
         </View>
       </View>
       <View style={styles.bottom}>
@@ -80,8 +110,11 @@ const styles = StyleSheet.create({
   titleText: { flex: 1 },
   shopName: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   subtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  rightCol: { alignItems: "flex-end", gap: 4 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   statusText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  urgentBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
+  urgentText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
   bottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   itemPreview: { fontSize: 13, fontFamily: "Inter_400Regular", flex: 1 },
   amount: { fontSize: 15, fontFamily: "Inter_700Bold" },

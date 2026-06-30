@@ -199,8 +199,6 @@ export default function InventoryScreen() {
         <TouchableOpacity onPress={load}><Feather name="refresh-cw" size={18} color={colors.primary} /></TouchableOpacity>
       </View>
 
-      <WholesalerTabBar />
-
       <View style={[styles.summaryRow, { paddingHorizontal: 16, paddingTop: 12 }]}>
         <View style={[styles.summaryTile, { backgroundColor: colors.available + "14", borderColor: colors.available + "44" }]}>
           <Text style={[styles.summaryNum, { color: colors.available }]}>{items.length - outOfStockItems.length - lowStockItems.length}</Text>
@@ -240,7 +238,7 @@ export default function InventoryScreen() {
         <Feather name="chevron-right" size={20} color="#FFF" />
       </TouchableOpacity>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 32, gap: 10 }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }} keyboardShouldPersistTaps="handled">
         <View style={[styles.form, { borderColor: colors.border, backgroundColor: colors.card }]}>
           <Text style={[styles.formTitle, { color: colors.foreground }]}>{editingId ? s("editItem") : s("addOneItem")}</Text>
 
@@ -364,29 +362,63 @@ export default function InventoryScreen() {
             <Text style={[styles.categoryHeader, { color: colors.mutedForeground }]}>
               {category}  ·  {list.length}
             </Text>
-            {list.map((item) => (
-              <View key={item.id} style={[styles.row, { borderColor: colors.border, backgroundColor: colors.card }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.name, { color: colors.foreground }]}>{item.name}</Text>
-                  <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
-                    ₹{item.pricePerUnit}/{item.unit}  ·  stock {item.stockQuantity ?? 0} {item.unit}{(item.taxPercent ?? 0) > 0 ? `  ·  tax ${item.taxPercent}%` : ""}
-                  </Text>
-                  {!!item.offer && <Text style={{ color: colors.available, fontSize: 12, marginTop: 2 }}>{item.offer}</Text>}
-                  <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>
-                    {s("minOrderQty")}: {item.minOrderQty ?? 1} {item.unit}
-                  </Text>
+            {list.map((item) => {
+              const stock = item.stockQuantity ?? 0;
+              const isLow = stock <= (item.minOrderQty ?? 3) && stock > 0;
+              const isOut = stock === 0;
+              const stockColor = isOut ? colors.destructive : isLow ? "#D97706" : colors.available;
+              return (
+                <View key={item.id} style={[styles.row, { borderColor: isOut ? colors.destructive + "55" : isLow ? "#F59E0B55" : colors.border, backgroundColor: colors.card }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.name, { color: colors.foreground }]}>{item.name}</Text>
+                    <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                      ₹{item.pricePerUnit}/{item.unit}{(item.taxPercent ?? 0) > 0 ? `  ·  tax ${item.taxPercent}%` : ""}
+                    </Text>
+                    {!!item.offer && <Text style={{ color: colors.available, fontSize: 12, marginTop: 2 }}>{item.offer}</Text>}
+                  </View>
+                  {/* Quick stock +/- */}
+                  <View style={styles.quickEdit}>
+                    <TouchableOpacity
+                      style={[styles.qBtn, { borderColor: colors.border }]}
+                      onPress={async () => {
+                        const newQty = Math.max(0, stock - 1);
+                        setItems(prev => prev.map(i => i.id === item.id ? { ...i, stockQuantity: newQty } : i));
+                        try {
+                          const h = getUserHeaders(user!);
+                          await apiPatch(`/api/wholesaler/inventory/${item.id}`, { stockQuantity: newQty }, h);
+                        } catch {}
+                      }}
+                    >
+                      <Feather name="minus" size={14} color={colors.foreground} />
+                    </TouchableOpacity>
+                    <Text style={[styles.qStock, { color: stockColor }]}>{stock}</Text>
+                    <TouchableOpacity
+                      style={[styles.qBtn, { borderColor: colors.border }]}
+                      onPress={async () => {
+                        const newQty = stock + 1;
+                        setItems(prev => prev.map(i => i.id === item.id ? { ...i, stockQuantity: newQty } : i));
+                        try {
+                          const h = getUserHeaders(user!);
+                          await apiPatch(`/api/wholesaler/inventory/${item.id}`, { stockQuantity: newQty }, h);
+                        } catch {}
+                      }}
+                    >
+                      <Feather name="plus" size={14} color={colors.foreground} />
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity onPress={() => { setEditingId(item.id); setDraft(item); setShowMore(true); }}>
+                    <Feather name="edit-2" size={18} color={colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => deleteItem(item)}>
+                    <Feather name="trash-2" size={18} color={colors.destructive} />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => { setEditingId(item.id); setDraft(item); setShowMore(true); }}>
-                  <Feather name="edit-2" size={18} color={colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => deleteItem(item)}>
-                  <Feather name="trash-2" size={18} color={colors.destructive} />
-                </TouchableOpacity>
-              </View>
-            ))}
+              );
+            })}
           </View>
         ))}
       </ScrollView>
+      <WholesalerTabBar />
     </View>
   );
 }
@@ -423,4 +455,7 @@ const styles = StyleSheet.create({
   emptyBox: { alignItems: "center", gap: 6, padding: 24, borderRadius: 14, borderWidth: 1, borderStyle: "dashed" },
   row: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center", gap: 10 },
   name: { fontFamily: "Inter_600SemiBold", fontSize: 15 },
+  quickEdit: { flexDirection: "row", alignItems: "center", gap: 6 },
+  qBtn: { width: 28, height: 28, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  qStock: { fontSize: 14, fontFamily: "Inter_700Bold", minWidth: 24, textAlign: "center" },
 });
