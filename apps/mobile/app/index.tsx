@@ -164,6 +164,21 @@ export default function LoginScreen() {
               <Text style={styles.ctaBtnText}>{GET_STARTED[language]}</Text>
               <Feather name="arrow-right" size={22} color="#FFF" />
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.loginLink}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setStep("phone");
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.loginLinkText, { color: colors.mutedForeground }]}>
+                {language === "te" ? "ఇప్పటికే అకౌంట్ ఉందా? " : language === "hi" ? "पहले से खाता है? " : "Already have an account? "}
+                <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
+                  {language === "te" ? "లాగిన్" : language === "hi" ? "लॉगिन" : "Log in"}
+                </Text>
+              </Text>
+            </TouchableOpacity>
           </Animated.View>
         </View>
       )}
@@ -344,6 +359,8 @@ const styles = StyleSheet.create({
   splashCta: { gap: 0 },
   ctaBtn: { height: 62, borderRadius: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   ctaBtnText: { color: "#FFF", fontSize: 20, fontFamily: "Inter_700Bold" },
+  loginLink: { alignItems: "center", paddingTop: 16 },
+  loginLinkText: { fontSize: 14, fontFamily: "Inter_400Regular" },
 
   // Shared
   scroll: { flexGrow: 1, paddingHorizontal: 24, justifyContent: "center" },
