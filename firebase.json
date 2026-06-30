@@ -1,1 +1,17 @@
-{}
+{
+  "hosting": {
+    "public": "apps/mobile/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/assets/**", "destination": "/assets/**" },
+      { "source": "/_expo/**", "destination": "/_expo/**" },
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      {
+        "source": "**/*.ttf",
+        "headers": [{ "key": "Content-Type", "value": "font/ttf" }]
+      }
+    ]
+  }
+}

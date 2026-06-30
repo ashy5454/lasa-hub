@@ -3,15 +3,20 @@ import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import * as Location from "expo-location";
-import { FirebaseRecaptchaVerifierModal } from "expo-firebase-recaptcha";
 import {
   signInWithPhoneNumber,
   onAuthStateChanged,
   signOut,
+  RecaptchaVerifier,
   type ConfirmationResult,
   type User as FirebaseUser,
 } from "firebase/auth";
 import { auth, firebaseConfig } from "@/lib/firebase";
+
+// expo-firebase-recaptcha only works on native (uses compat SDK)
+const FirebaseRecaptchaVerifierModal = Platform.OS !== "web"
+  ? require("expo-firebase-recaptcha").FirebaseRecaptchaVerifierModal
+  : null;
 import { apiGet, apiPost } from "@/constants/api";
 
 export type UserRole = "kirana" | "wholesaler";
@@ -54,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRole, setSelectedRole] = useState<UserRole>("kirana");
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const recaptchaVerifierRef = useRef<FirebaseRecaptchaVerifierModal>(null);
+  const recaptchaVerifierRef = useRef<any>(null);
 
   // Restore cached user on cold start, then sync with server
   useEffect(() => {
@@ -113,8 +118,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const sendOtp = useCallback(async (phone: string) => {
     const normalizedPhone = normalizePhone(phone);
     const fullPhone = `+91${normalizedPhone}`;
-    if (!recaptchaVerifierRef.current) throw new Error("reCAPTCHA not ready");
-    const result = await signInWithPhoneNumber(auth, fullPhone, recaptchaVerifierRef.current);
+    let verifier = recaptchaVerifierRef.current;
+    if (Platform.OS === "web") {
+      // On web: create an invisible RecaptchaVerifier using modular Firebase SDK
+      let container = document.getElementById("recaptcha-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "recaptcha-container";
+        document.body.appendChild(container);
+      }
+      verifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
+      recaptchaVerifierRef.current = verifier;
+    }
+    if (!verifier) throw new Error("reCAPTCHA not ready");
+    const result = await signInWithPhoneNumber(auth, fullPhone, verifier);
     setConfirmationResult(result);
   }, []);
 
@@ -244,11 +261,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sendOtp, verifyOtp, completeProfile, loginExistingUser, refreshUser,
       logout, setRole, selectedRole,
     }}>
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifierRef}
-        firebaseConfig={firebaseConfig}
-        attemptInvisibleVerification
-      />
+      {Platform.OS !== "web" && FirebaseRecaptchaVerifierModal && (
+        <FirebaseRecaptchaVerifierModal
+          ref={recaptchaVerifierRef}
+          firebaseConfig={firebaseConfig}
+          attemptInvisibleVerification
+        />
+      )}
       {children}
     </AuthContext.Provider>
   );

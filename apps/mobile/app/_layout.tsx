@@ -5,6 +5,7 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
