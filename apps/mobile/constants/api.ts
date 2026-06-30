@@ -10,9 +10,7 @@ function getApiBase(): string {
       const match = host.match(
         /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(\d+)-(.+)$/i,
       );
-      if (match) {
-        return `https://${match[1]}-8080-${match[3]}`;
-      }
+      if (match) return `https://${match[1]}-8080-${match[3]}`;
     }
   }
   return "http://localhost:8080";
@@ -20,11 +18,30 @@ function getApiBase(): string {
 
 export const API_BASE = getApiBase();
 
-async function request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+// Lazily import Firebase auth to avoid circular deps — resolved at call time.
+async function getFirebaseIdToken(): Promise<string | null> {
+  try {
+    const { auth } = await import("@/lib/firebase");
+    const user = auth.currentUser;
+    if (!user) return null;
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+async function request<T>(
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   const url = `${API_BASE}${path}`;
+  const idToken = await getFirebaseIdToken();
+  const authHeader: Record<string, string> = idToken ? { Authorization: `Bearer ${idToken}` } : {};
   const res = await fetch(url, {
     method,
-    headers: { "Content-Type": "application/json", ...(headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...authHeader, ...(extraHeaders ?? {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -41,10 +58,10 @@ export const apiPost = <T = any>(path: string, body: Record<string, unknown>, he
 export const apiPatch = <T = any>(path: string, body: Record<string, unknown>, headers?: Record<string, string>) => request<T>("PATCH", path, body, headers);
 export const apiDelete = <T = any>(path: string, headers?: Record<string, string>) => request<T>("DELETE", path, undefined, headers);
 
+// Role headers sent alongside the Firebase ID token — server reads both.
 export function getUserHeaders(user?: { phone?: string; role?: string; wholesalerId?: string } | null): Record<string, string> | undefined {
-  if (!user?.phone || !user?.role) return undefined;
+  if (!user?.role) return undefined;
   return {
-    "x-user-phone": user.phone,
     "x-user-role": user.role,
     ...(user.wholesalerId ? { "x-user-wholesaler-id": user.wholesalerId } : {}),
   };

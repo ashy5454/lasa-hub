@@ -1,4 +1,7 @@
-type Role = "kirana" | "wholesaler" | "admin";
+import { auth } from "./firebase";
+import { normalizePhone } from "./phone";
+
+export type Role = "kirana" | "wholesaler" | "admin";
 
 export interface Actor {
   phone: string;
@@ -6,16 +9,23 @@ export interface Actor {
   wholesalerId?: string;
 }
 
-export function getActor(req: any): Actor | null {
-  const phone = req.headers["x-user-phone"];
-  const role = req.headers["x-user-role"];
-  if (typeof phone !== "string" || typeof role !== "string") return null;
-  return {
-    phone,
-    role: role as Role,
-    wholesalerId:
+export async function getActor(req: any): Promise<Actor | null> {
+  const authHeader = req.headers["authorization"];
+  if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) return null;
+
+  const token = authHeader.slice(7);
+  try {
+    const decoded = await auth.verifyIdToken(token);
+    const rawPhone = decoded.phone_number;
+    if (!rawPhone) return null;
+    const phone = normalizePhone(rawPhone);
+    const role = (req.headers["x-user-role"] as Role) ?? "kirana";
+    const wholesalerId =
       typeof req.headers["x-user-wholesaler-id"] === "string"
         ? req.headers["x-user-wholesaler-id"]
-        : undefined,
-  };
+        : undefined;
+    return { phone, role, wholesalerId };
+  } catch {
+    return null;
+  }
 }

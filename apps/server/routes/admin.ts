@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
-import { db, hasDb, wholesalersTable, catalogItemsTable, usersTable, ordersTable, orderItemsTable } from "@workspace/db";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { db } from "../lib/firebase";
+import { FieldValue } from "firebase-admin/firestore";
 import { logger } from "../lib/logger";
 import { snapshotUsage, resetRateLimits } from "../lib/quotas";
 
@@ -8,16 +8,10 @@ const router = Router();
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const expected = process.env.ADMIN_TOKEN;
-  if (!expected) {
-    res.status(503).json({ error: "ADMIN_TOKEN not configured on server" });
-    return;
-  }
+  if (!expected) { res.status(503).json({ error: "ADMIN_TOKEN not configured on server" }); return; }
   const header = req.headers.authorization ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : (req.query.token as string | undefined);
-  if (token !== expected) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  if (token !== expected) { res.status(401).json({ error: "Unauthorized" }); return; }
   next();
 }
 
@@ -29,26 +23,10 @@ router.post("/admin/login", (req, res) => {
   res.status(401).json({ ok: false });
 });
 
-/**
- * GET /api/usage — server-side quota dashboard. Auth-protected because
- * it leaks limit values. Use this from the admin panel (or
- * `curl -H "Authorization: Bearer $ADMIN_TOKEN" /api/usage`) to see
- * how close you are to Gemini's daily cap or Twilio's daily cap.
- * Resets at 00:00 UTC.
- */
 router.get("/usage", requireAdmin, (_req, res) => {
   res.json(snapshotUsage());
 });
 
-/**
- * POST /api/admin/reset-rate-limits — escape hatch when a real user
- * (most commonly the founder testing the app) gets stuck behind the
- * per-phone OTP limiter or the per-IP AI limiter.
- *
- *   { "prefix": "otp:phone:8369490053" }   // clear one phone
- *   { "prefix": "otp:phone:" }              // clear all OTP buckets
- *   {}                                      // clear everything
- */
 router.post("/admin/reset-rate-limits", requireAdmin, (req, res) => {
   const { prefix } = (req.body ?? {}) as { prefix?: string };
   const out = resetRateLimits(prefix);
@@ -56,219 +34,157 @@ router.post("/admin/reset-rate-limits", requireAdmin, (req, res) => {
   res.json(out);
 });
 
-/**
- * GET /api/admin/twilio-status/:sid — ask Twilio for the terminal
- * status of a message we sent. The SID is logged on every OTP send
- * (look for `OTP delivered via Twilio` in Render logs). Twilio's
- * API status field is the source of truth — "queued" or "sent" mean
- * the message is in flight; "delivered" means the recipient phone
- * acknowledged it; "undelivered" / "failed" mean it never arrived,
- * usually with an errorCode that tells you why.
- *
- * Common WhatsApp-Sandbox errorCodes you might see:
- *   63016  → recipient hasn't opted in to sandbox (or session expired)
- *   63003  → channel could not find a destination address
- *   21610  → recipient has explicitly unsubscribed
- *
- * Common SMS errorCodes:
- *   21608  → trial account, destination not in Verified Caller IDs
- *   30007  → carrier blocked (often DLT not registered for India)
- *   30008  → unknown / silent carrier filter
- */
-router.get("/admin/twilio-status/:sid", requireAdmin, async (req, res) => {
-  const sid = String(req.params.sid);
-  if (!/^[A-Z]{2}[0-9a-f]{32}$/.test(sid)) {
-    res.status(400).json({ error: "Invalid Twilio SID format (expected SM/MG/SMxxx... 34 chars)" });
-    return;
-  }
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  if (!accountSid || !authToken) {
-    res.status(503).json({ error: "Twilio not configured on this server" });
-    return;
-  }
-  try {
-    // Use the REST API directly via fetch — saves us from instantiating
-    // the heavy Twilio client just for a single GET. Basic auth.
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages/${sid}.json`;
-    const r = await fetch(url, {
-      headers: { Authorization: "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64") },
-    });
-    if (!r.ok) {
-      const body = await r.text();
-      res.status(r.status).json({ error: "Twilio responded with " + r.status, body: body.slice(0, 500) });
-      return;
-    }
-    const j = (await r.json()) as any;
-    res.json({
-      sid: j.sid,
-      status: j.status,                  // queued / sent / delivered / undelivered / failed
-      errorCode: j.error_code,           // null if successful
-      errorMessage: j.error_message,
-      to: j.to,
-      from: j.from,
-      dateCreated: j.date_created,
-      dateSent: j.date_sent,
-      dateUpdated: j.date_updated,
-      // Translate the most common error codes into plain English so
-      // the operator doesn't have to grep Twilio docs.
-      hint:
-        j.error_code === 63016
-          ? "Recipient hasn't joined the WhatsApp sandbox — or the 72-hour session expired. Have them send any WhatsApp message to your sandbox number to re-arm."
-          : j.error_code === 63003
-          ? "Channel could not find a destination address. Check the From number is a valid WhatsApp-enabled Twilio number."
-          : j.error_code === 21608
-          ? "Trial Twilio account — destination not in Verified Caller IDs. Add the number under Twilio Console → Phone Numbers → Verified Caller IDs, or upgrade past trial."
-          : j.error_code === 30007
-          ? "Carrier blocked the message. For India SMS this usually means DLT template not registered."
-          : j.status === "delivered"
-          ? "Message reached the phone. If user says they didn't see it, ask them to check spam / archived chats."
-          : j.status === "queued" || j.status === "sent"
-          ? "Still in flight — refresh in a few seconds."
-          : null,
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message, sid }, "Twilio status lookup failed");
-    res.status(500).json({ error: err?.message ?? "Lookup failed" });
-  }
-});
-
-// --- Overview stats ---
+// GET /api/admin/stats
 router.get("/admin/stats", requireAdmin, async (_req, res) => {
   try {
-    if (!hasDb) { res.status(503).json({ error: "DB not configured" }); return; }
-    const [u] = await db.execute(sql`SELECT count(*)::int AS c FROM users`).then(r => r.rows as any[]);
-    const [w] = await db.execute(sql`SELECT count(*)::int AS c FROM wholesalers WHERE active = true`).then(r => r.rows as any[]);
-    const [o] = await db.execute(sql`SELECT count(*)::int AS c FROM orders`).then(r => r.rows as any[]);
-    const [p] = await db.execute(sql`SELECT count(*)::int AS c FROM orders WHERE status = 'pending'`).then(r => r.rows as any[]);
-    // Wholesalers that submitted GSTIN or FSSAI but haven't been verified yet
-    // = the admin's verification queue.
-    const [pv] = await db.execute(sql`
-      SELECT count(*)::int AS c FROM wholesalers
-      WHERE active = true AND verified = false AND (
-        (gstin IS NOT NULL AND length(gstin) > 0) OR
-        (fssai IS NOT NULL AND length(fssai) > 0)
-      )
-    `).then(r => r.rows as any[]);
-    res.json({ users: u.c, wholesalers: w.c, orders: o.c, pending: p.c, pendingVerification: pv.c });
+    const [usersCount, wholesalersCount, ordersSnap] = await Promise.all([
+      db.collection("users").count().get(),
+      db.collection("wholesalers").where("active", "==", true).count().get(),
+      db.collection("orders").get(),
+    ]);
+
+    const totalOrders = ordersSnap.size;
+    const pendingOrders = ordersSnap.docs.filter(d => d.data().status === "pending").length;
+
+    // Wholesalers with gstin or fssai awaiting verification
+    const [gstin, fssai] = await Promise.all([
+      db.collection("wholesalers").where("active", "==", true).where("verified", "==", false).where("gstin", "!=", "").get(),
+      db.collection("wholesalers").where("active", "==", true).where("verified", "==", false).where("fssai", "!=", "").get(),
+    ]);
+    const pendingVerificationIds = new Set([...gstin.docs.map(d => d.id), ...fssai.docs.map(d => d.id)]);
+
+    res.json({
+      users: usersCount.data().count,
+      wholesalers: wholesalersCount.data().count,
+      orders: totalOrders,
+      pending: pendingOrders,
+      pendingVerification: pendingVerificationIds.size,
+    });
   } catch (err: any) {
     logger.error({ err: err?.message }, "admin stats failed");
     res.status(500).json({ error: "Failed to load stats" });
   }
 });
 
-/**
- * Wholesalers that have submitted GSTIN or FSSAI but haven't been
- * approved yet. Used by the admin Overview tab as a verification queue.
- */
+// GET /api/admin/pending-verifications
 router.get("/admin/pending-verifications", requireAdmin, async (_req, res) => {
   try {
-    if (!hasDb) { res.status(503).json({ error: "DB not configured" }); return; }
-    const rows = await db.execute(sql`
-      SELECT id, name, owner_name as "ownerName", owner_phone as "ownerPhone",
-             gstin, fssai, created_at as "createdAt", updated_at as "updatedAt"
-      FROM wholesalers
-      WHERE active = true AND verified = false AND (
-        (gstin IS NOT NULL AND length(gstin) > 0) OR
-        (fssai IS NOT NULL AND length(fssai) > 0)
-      )
-      ORDER BY updated_at DESC
-    `).then(r => r.rows);
-    res.json({ wholesalers: rows });
+    const [gstin, fssai] = await Promise.all([
+      db.collection("wholesalers").where("active", "==", true).where("verified", "==", false).where("gstin", "!=", "").get(),
+      db.collection("wholesalers").where("active", "==", true).where("verified", "==", false).where("fssai", "!=", "").get(),
+    ]);
+    const seen = new Set<string>();
+    const wholesalers: any[] = [];
+    for (const d of [...gstin.docs, ...fssai.docs]) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      wholesalers.push({ id: d.id, ...d.data() });
+    }
+    wholesalers.sort((a, b) => (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0));
+    res.json({ wholesalers });
   } catch (err: any) {
     logger.error({ err: err?.message }, "pending verifications failed");
     res.status(500).json({ error: "Failed to load pending verifications" });
   }
 });
 
-// --- Wholesalers CRUD ---
+// GET /api/admin/wholesalers
 router.get("/admin/wholesalers", requireAdmin, async (_req, res) => {
-  const rows = await db.select().from(wholesalersTable).orderBy(asc(wholesalersTable.name));
-  // Per-wholesaler aggregates: order count, completed revenue.
-  const agg = await db.execute(sql`
-    SELECT wholesaler_id,
-           count(*)::int AS order_count,
-           coalesce(sum(case when status = 'delivered' then total_amount else 0 end), 0)::float AS revenue
-    FROM orders
-    GROUP BY wholesaler_id
-  `).then(r => r.rows as any[]);
-  const byId = new Map<string, { orderCount: number; revenue: number }>();
-  for (const row of agg) {
-    byId.set(row.wholesaler_id, { orderCount: row.order_count, revenue: Number(row.revenue) });
+  try {
+    const wsSnap = await db.collection("wholesalers").orderBy("name").get();
+    const ordersSnap = await db.collection("orders").get();
+
+    const orderCount = new Map<string, number>();
+    const revenue = new Map<string, number>();
+    for (const d of ordersSnap.docs) {
+      const o = d.data();
+      orderCount.set(o.wholesalerId, (orderCount.get(o.wholesalerId) ?? 0) + 1);
+      if (o.status === "delivered") {
+        revenue.set(o.wholesalerId, (revenue.get(o.wholesalerId) ?? 0) + (Number(o.totalAmount) || 0));
+      }
+    }
+
+    res.json({
+      wholesalers: wsSnap.docs.map(d => ({
+        id: d.id, ...d.data(),
+        orderCount: orderCount.get(d.id) ?? 0,
+        revenue: revenue.get(d.id) ?? 0,
+      })),
+    });
+  } catch (err: any) {
+    logger.error({ err: err?.message }, "admin wholesalers failed");
+    res.status(500).json({ error: "Failed to load wholesalers" });
   }
-  res.json({
-    wholesalers: rows.map(w => ({
-      ...w,
-      orderCount: byId.get(w.id)?.orderCount ?? 0,
-      revenue: byId.get(w.id)?.revenue ?? 0,
-    })),
-  });
 });
 
+// POST /api/admin/wholesalers
 router.post("/admin/wholesalers", requireAdmin, async (req, res) => {
-  const body = req.body as Partial<typeof wholesalersTable.$inferInsert>;
-  if (!body.id || !body.name || !body.ownerName || !body.ownerPhone || !body.location) {
-    res.status(400).json({ error: "id, name, ownerName, ownerPhone, location required" });
-    return;
+  try {
+    const body = req.body as any;
+    if (!body.id || !body.name || !body.ownerName || !body.ownerPhone || !body.location) {
+      res.status(400).json({ error: "id, name, ownerName, ownerPhone, location required" });
+      return;
+    }
+    const data = {
+      id: body.id, name: body.name, ownerName: body.ownerName,
+      ownerPhone: body.ownerPhone, location: body.location,
+      lat: body.lat ?? null, lng: body.lng ?? null,
+      rating: body.rating ?? 4.5, specialOffer: body.specialOffer ?? null,
+      active: body.active ?? true, verified: body.verified ?? false,
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    };
+    await db.collection("wholesalers").doc(body.id).set(data);
+    res.json({ wholesaler: data });
+  } catch (err: any) {
+    logger.error({ err: err?.message }, "admin create wholesaler failed");
+    res.status(500).json({ error: "Failed to create wholesaler" });
   }
-  const [row] = await db
-    .insert(wholesalersTable)
-    .values({
-      id: body.id,
-      name: body.name,
-      ownerName: body.ownerName,
-      ownerPhone: body.ownerPhone,
-      location: body.location,
-      distance: body.distance ?? "",
-      lat: body.lat ?? null,
-      lng: body.lng ?? null,
-      rating: body.rating ?? 4.5,
-      specialOffer: body.specialOffer ?? null,
-      active: body.active ?? true,
-    })
-    .returning();
-  res.json({ wholesaler: row });
 });
 
+// PATCH /api/admin/wholesalers/:id
 router.patch("/admin/wholesalers/:id", requireAdmin, async (req, res) => {
-  const [row] = await db
-    .update(wholesalersTable)
-    .set({ ...(req.body as any), updatedAt: new Date() })
-    .where(eq(wholesalersTable.id, String(req.params.id)))
-    .returning();
-  if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  res.json({ wholesaler: row });
+  try {
+    const id = String(req.params.id);
+    const ref = db.collection("wholesalers").doc(id);
+    await ref.update({ ...(req.body as any), updatedAt: FieldValue.serverTimestamp() });
+    const snap = await ref.get();
+    if (!snap.exists) { res.status(404).json({ error: "Not found" }); return; }
+    res.json({ wholesaler: { id: snap.id, ...snap.data() } });
+  } catch (err: any) {
+    logger.error({ err: err?.message }, "admin patch wholesaler failed");
+    res.status(500).json({ error: "Failed to update wholesaler" });
+  }
 });
 
+// DELETE /api/admin/wholesalers/:id — cascades orders, items, detaches users
 router.delete("/admin/wholesalers/:id", requireAdmin, async (req, res) => {
   const id = String(req.params.id);
   try {
-    // Cascade deletion across the rows that reference this wholesaler.
-    // The orders FK is ON DELETE RESTRICT, so we must clear those first.
-    // Wrap in a transaction so a partial failure doesn't leave dangling rows.
-    await db.transaction(async (tx) => {
-      // 1. Find every order against this wholesaler.
-      const orderIds = (await tx
-        .select({ id: ordersTable.id })
-        .from(ordersTable)
-        .where(eq(ordersTable.wholesalerId, id))
-      ).map(r => r.id);
-      // 2. Delete the line items for those orders, then the orders themselves.
-      if (orderIds.length) {
-        await tx.delete(orderItemsTable).where(inArray(orderItemsTable.orderId, orderIds));
-        await tx.delete(ordersTable).where(eq(ordersTable.wholesalerId, id));
-      }
-      // 3. Detach any users who were owners of this wholesaler.
-      await tx.update(usersTable)
-        .set({ wholesalerId: null, updatedAt: new Date() })
-        .where(eq(usersTable.wholesalerId, id));
-      // 4. catalog_items cascades automatically because the FK has onDelete:"cascade".
-      // 5. Finally, drop the wholesaler row itself.
-      const deleted = await tx.delete(wholesalersTable)
-        .where(eq(wholesalersTable.id, id))
-        .returning({ id: wholesalersTable.id });
-      if (!deleted.length) throw new Error("Wholesaler not found");
-    });
+    // 1. Find orders for this wholesaler
+    const ordersSnap = await db.collection("orders").where("wholesalerId", "==", id).get();
+
+    // 2. Delete order items subcollections + orders
+    const batch = db.batch();
+    for (const orderDoc of ordersSnap.docs) {
+      const itemsSnap = await orderDoc.ref.collection("items").get();
+      for (const item of itemsSnap.docs) batch.delete(item.ref);
+      batch.delete(orderDoc.ref);
+    }
+
+    // 3. Delete catalog items subcollection
+    const catalogSnap = await db.collection("wholesalers").doc(id).collection("catalog").get();
+    for (const item of catalogSnap.docs) batch.delete(item.ref);
+
+    // 4. Detach users
+    const usersSnap = await db.collection("users").where("wholesalerId", "==", id).get();
+    for (const u of usersSnap.docs) {
+      batch.update(u.ref, { wholesalerId: null, updatedAt: FieldValue.serverTimestamp() });
+    }
+
+    // 5. Delete wholesaler doc
+    batch.delete(db.collection("wholesalers").doc(id));
+
+    await batch.commit();
     res.json({ ok: true });
   } catch (err: any) {
     logger.error({ err: err?.message, id }, "admin delete wholesaler failed");
@@ -276,83 +192,90 @@ router.delete("/admin/wholesalers/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// --- Catalog items for a wholesaler ---
+// GET /api/admin/wholesalers/:id/catalog
 router.get("/admin/wholesalers/:id/catalog", requireAdmin, async (req, res) => {
-  const rows = await db
-    .select()
-    .from(catalogItemsTable)
-    .where(eq(catalogItemsTable.wholesalerId, String(req.params.id)))
-    .orderBy(asc(catalogItemsTable.name));
-  res.json({ catalog: rows });
-});
-
-router.post("/admin/wholesalers/:id/catalog", requireAdmin, async (req, res) => {
-  const body = req.body as Partial<typeof catalogItemsTable.$inferInsert>;
-  if (!body.name || !body.unit || body.pricePerUnit === undefined) {
-    res.status(400).json({ error: "name, unit, pricePerUnit required" });
-    return;
+  try {
+    const snap = await db.collection("wholesalers").doc(String(req.params.id)).collection("catalog").orderBy("name").get();
+    res.json({ catalog: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load catalog" });
   }
-  const [row] = await db
-    .insert(catalogItemsTable)
-    .values({
-      wholesalerId: String(req.params.id),
-      name: body.name,
-      nameTe: body.nameTe ?? "",
-      nameHi: body.nameHi ?? "",
-      unit: body.unit,
-      pricePerUnit: body.pricePerUnit,
-      available: body.available ?? true,
-      minOrderQty: body.minOrderQty ?? 1,
+});
+
+// POST /api/admin/wholesalers/:id/catalog
+router.post("/admin/wholesalers/:id/catalog", requireAdmin, async (req, res) => {
+  try {
+    const body = req.body as any;
+    if (!body.name || !body.unit || body.pricePerUnit === undefined) {
+      res.status(400).json({ error: "name, unit, pricePerUnit required" });
+      return;
+    }
+    const data = {
+      wholesalerId: String(req.params.id), name: body.name,
+      nameTe: body.nameTe ?? "", nameHi: body.nameHi ?? "",
+      unit: body.unit, pricePerUnit: body.pricePerUnit,
+      available: body.available ?? true, minOrderQty: body.minOrderQty ?? 1,
       offer: body.offer ?? null,
-    })
-    .returning();
-  res.json({ item: row });
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    };
+    const ref = await db.collection("wholesalers").doc(String(req.params.id)).collection("catalog").add(data);
+    res.json({ item: { id: ref.id, ...data } });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to create catalog item" });
+  }
 });
 
+// PATCH /api/admin/catalog/:itemId — requires wholesalerId in body or query to locate subcollection
 router.patch("/admin/catalog/:itemId", requireAdmin, async (req, res) => {
-  const itemId = parseInt(String(req.params.itemId), 10);
-  if (Number.isNaN(itemId)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const [row] = await db
-    .update(catalogItemsTable)
-    .set({ ...(req.body as any), updatedAt: new Date() })
-    .where(eq(catalogItemsTable.id, itemId))
-    .returning();
-  if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  res.json({ item: row });
+  try {
+    const body = req.body as any;
+    const wholesalerId = body.wholesalerId ?? req.query.wholesalerId as string;
+    if (!wholesalerId) { res.status(400).json({ error: "wholesalerId required" }); return; }
+    const ref = db.collection("wholesalers").doc(wholesalerId).collection("catalog").doc(String(req.params.itemId));
+    const { wholesalerId: _w, ...rest } = body;
+    await ref.update({ ...rest, updatedAt: FieldValue.serverTimestamp() });
+    const snap = await ref.get();
+    res.json({ item: { id: snap.id, ...snap.data() } });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update catalog item" });
+  }
 });
 
+// DELETE /api/admin/catalog/:itemId
 router.delete("/admin/catalog/:itemId", requireAdmin, async (req, res) => {
-  const itemId = parseInt(String(req.params.itemId), 10);
-  if (Number.isNaN(itemId)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await db.delete(catalogItemsTable).where(eq(catalogItemsTable.id, itemId));
-  res.json({ ok: true });
+  try {
+    const wholesalerId = req.query.wholesalerId as string;
+    if (!wholesalerId) { res.status(400).json({ error: "wholesalerId query param required" }); return; }
+    await db.collection("wholesalers").doc(wholesalerId).collection("catalog").doc(String(req.params.itemId)).delete();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to delete catalog item" });
+  }
 });
 
-// --- Users ---
+// GET /api/admin/users
 router.get("/admin/users", requireAdmin, async (_req, res) => {
-  const rows = await db.select().from(usersTable).orderBy(desc(usersTable.createdAt));
-  res.json({ users: rows });
+  try {
+    const snap = await db.collection("users").orderBy("createdAt", "desc").get();
+    res.json({ users: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load users" });
+  }
 });
 
+// DELETE /api/admin/users/:phone
 router.delete("/admin/users/:phone", requireAdmin, async (req, res) => {
   const phone = String(req.params.phone);
   try {
-    await db.transaction(async (tx) => {
-      // Clear orders placed by this kirana first (orders → users FK is RESTRICT).
-      const orderIds = (await tx
-        .select({ id: ordersTable.id })
-        .from(ordersTable)
-        .where(eq(ordersTable.kiranaPhone, phone))
-      ).map(r => r.id);
-      if (orderIds.length) {
-        await tx.delete(orderItemsTable).where(inArray(orderItemsTable.orderId, orderIds));
-        await tx.delete(ordersTable).where(eq(ordersTable.kiranaPhone, phone));
-      }
-      const deleted = await tx.delete(usersTable)
-        .where(eq(usersTable.phone, phone))
-        .returning({ phone: usersTable.phone });
-      if (!deleted.length) throw new Error("User not found");
-    });
+    const ordersSnap = await db.collection("orders").where("kiranaPhone", "==", phone).get();
+    const batch = db.batch();
+    for (const orderDoc of ordersSnap.docs) {
+      const itemsSnap = await orderDoc.ref.collection("items").get();
+      for (const item of itemsSnap.docs) batch.delete(item.ref);
+      batch.delete(orderDoc.ref);
+    }
+    batch.delete(db.collection("users").doc(phone));
+    await batch.commit();
     res.json({ ok: true });
   } catch (err: any) {
     logger.error({ err: err?.message, phone }, "admin delete user failed");
@@ -360,61 +283,72 @@ router.delete("/admin/users/:phone", requireAdmin, async (req, res) => {
   }
 });
 
+// PATCH /api/admin/users/:phone
 router.patch("/admin/users/:phone", requireAdmin, async (req, res) => {
-  const [row] = await db
-    .update(usersTable)
-    .set({ ...(req.body as any), updatedAt: new Date() })
-    .where(eq(usersTable.phone, String(req.params.phone)))
-    .returning();
-  if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  res.json({ user: row });
+  try {
+    const ref = db.collection("users").doc(String(req.params.phone));
+    await ref.update({ ...(req.body as any), updatedAt: FieldValue.serverTimestamp() });
+    const snap = await ref.get();
+    res.json({ user: { id: snap.id, ...snap.data() } });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update user" });
+  }
 });
 
+// GET /api/admin/users/:phone/drilldown
 router.get("/admin/users/:phone/drilldown", requireAdmin, async (req, res) => {
-  const phone = String(req.params.phone);
-  const userRows = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
-  if (!userRows.length) { res.status(404).json({ error: "User not found" }); return; }
+  try {
+    const phone = String(req.params.phone);
+    const userSnap = await db.collection("users").doc(phone).get();
+    if (!userSnap.exists) { res.status(404).json({ error: "User not found" }); return; }
 
-  const orders = await db
-    .select()
-    .from(ordersTable)
-    .where(eq(ordersTable.kiranaPhone, phone))
-    .orderBy(desc(ordersTable.createdAt));
+    const ordersSnap = await db.collection("orders")
+      .where("kiranaPhone", "==", phone)
+      .orderBy("createdAt", "desc")
+      .get();
 
-  const items = await db.select().from(orderItemsTable);
-  const byOrder: Record<string, { name: string; quantity: string; available: boolean }[]> = {};
-  for (const i of items) {
-    (byOrder[i.orderId] ??= []).push({ name: i.name, quantity: i.quantity, available: i.available });
+    const history = await Promise.all(ordersSnap.docs.map(async d => {
+      const itemsSnap = await d.ref.collection("items").get();
+      const items = itemsSnap.docs.map(i => {
+        const data = i.data();
+        return { name: data.name, quantity: data.quantity, available: data.available };
+      });
+      return { id: d.id, ...d.data(), items };
+    }));
+
+    res.json({ user: { id: userSnap.id, ...userSnap.data() }, history });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load user drilldown" });
   }
-
-  res.json({
-    user: userRows[0],
-    history: orders.map((o) => ({ ...o, items: byOrder[o.id] ?? [] })),
-  });
 });
 
-// --- Orders monitor ---
-router.get("/admin/orders", requireAdmin, async (_req, res) => {
-  const status = _req.query.status as string | undefined;
-  const wholesalerId = _req.query.wholesalerId as string | undefined;
-  const kiranaPhone = _req.query.kiranaPhone as string | undefined;
-  const rows = await db
-    .select()
-    .from(ordersTable)
-    .where(and(
-      status && ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"].includes(status)
-        ? eq(ordersTable.status, status as any)
-        : undefined,
-      wholesalerId ? eq(ordersTable.wholesalerId, wholesalerId) : undefined,
-      kiranaPhone ? eq(ordersTable.kiranaPhone, kiranaPhone) : undefined,
-    ))
-    .orderBy(desc(ordersTable.createdAt));
-  const items = await db.select().from(orderItemsTable);
-  const byOrder: Record<string, { name: string; quantity: string; available: boolean }[]> = {};
-  for (const i of items) {
-    (byOrder[i.orderId] ??= []).push({ name: i.name, quantity: i.quantity, available: i.available });
+// GET /api/admin/orders
+router.get("/admin/orders", requireAdmin, async (req, res) => {
+  try {
+    const status = req.query.status as string | undefined;
+    const wholesalerId = req.query.wholesalerId as string | undefined;
+    const kiranaPhone = req.query.kiranaPhone as string | undefined;
+
+    let query = db.collection("orders") as FirebaseFirestore.Query;
+    const validStatuses = ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"];
+    if (status && validStatuses.includes(status)) query = query.where("status", "==", status);
+    if (wholesalerId) query = query.where("wholesalerId", "==", wholesalerId);
+    if (kiranaPhone) query = query.where("kiranaPhone", "==", kiranaPhone);
+
+    const snap = await query.orderBy("createdAt", "desc").get();
+    const orders = await Promise.all(snap.docs.map(async d => {
+      const itemsSnap = await d.ref.collection("items").get();
+      const items = itemsSnap.docs.map(i => {
+        const data = i.data();
+        return { name: data.name, quantity: data.quantity, available: data.available };
+      });
+      return { id: d.id, ...d.data(), items };
+    }));
+
+    res.json({ orders });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to load orders" });
   }
-  res.json({ orders: rows.map(r => ({ ...r, items: byOrder[r.id] ?? [] })) });
 });
 
 export default router;

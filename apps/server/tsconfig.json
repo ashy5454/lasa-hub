@@ -8,9 +8,6 @@
   "include": ["app.ts", "index.ts", "routes", "lib", "middlewares"],
   "references": [
     {
-      "path": "../../lib/db"
-    },
-    {
       "path": "../../lib/api-zod"
     }
   ]

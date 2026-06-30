@@ -1,6 +1,5 @@
-import { db } from "@workspace/db";
-import { wholesalersTable, catalogItemsTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db } from "./firebase";
+import { FieldValue } from "firebase-admin/firestore";
 
 interface SeedItem {
   name: string; nameTe: string; nameHi: string;
@@ -52,7 +51,7 @@ const SEED: SeedWholesaler[] = [
       { name: "Turmeric", nameTe: "పసుపు", nameHi: "हल्दी", unit: "kg", pricePerUnit: 170, available: false, minOrderQty: 0.25 },
       { name: "Coconut Oil", nameTe: "కొబ్బరి నూనె", nameHi: "नारियल तेल", unit: "litre", pricePerUnit: 160, available: true, minOrderQty: 1, offer: "Buy 5L get 500ml free" },
       { name: "Biscuits Parle-G", nameTe: "పార్లే-జి బిస్కెట్లు", nameHi: "पारले-जी बिस्किट", unit: "box", pricePerUnit: 230, available: true, minOrderQty: 1 },
-      { name: "Wheat Flour", nameTe: "గోధుమ పిండి", nameHi: "गेहूं का आटा", unit: "kg", pricePerUnit: 36, available: true, minOrderQty: 5 },
+      { name: "Wheat Flour", nameTe: "గోధుమ పిండి", nameHi: "गेहूं का आటా", unit: "kg", pricePerUnit: 36, available: true, minOrderQty: 5 },
       { name: "Detergent", nameTe: "డిటర్జెంట్", nameHi: "डिटर्जेंट", unit: "kg", pricePerUnit: 88, available: true, minOrderQty: 1 },
       { name: "Milk Packet", nameTe: "పాల ప్యాకెట్", nameHi: "दूध पैकेट", unit: "litre", pricePerUnit: 60, available: true, minOrderQty: 10 },
       { name: "Groundnut Oil", nameTe: "వేరుశెనగ నూనె", nameHi: "मूंगफली तेल", unit: "litre", pricePerUnit: 170, available: true, minOrderQty: 1 },
@@ -83,35 +82,33 @@ const SEED: SeedWholesaler[] = [
 ];
 
 export async function seedIfEmpty() {
-  const existing = await db.execute(sql`SELECT count(*)::int AS c FROM wholesalers`);
-  const count = (existing.rows[0] as { c: number } | undefined)?.c ?? 0;
-  if (count > 0) return { seeded: false, count };
+  const snap = await db.collection("wholesalers").limit(1).get();
+  if (!snap.empty) return { seeded: false, count: 0 };
 
   for (const w of SEED) {
-    await db.insert(wholesalersTable).values({
-      id: w.id,
-      name: w.name,
-      ownerName: w.ownerName,
-      ownerPhone: w.ownerPhone,
-      location: w.location,
-      distance: w.distance,
-      rating: w.rating,
+    await db.collection("wholesalers").doc(w.id).set({
+      id: w.id, name: w.name, ownerName: w.ownerName,
+      ownerPhone: w.ownerPhone, location: w.location,
+      distance: w.distance, rating: w.rating,
       specialOffer: w.specialOffer ?? null,
-      active: true,
+      active: true, verified: false,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
+    const batch = db.batch();
     for (const c of w.catalog) {
-      await db.insert(catalogItemsTable).values({
-        wholesalerId: w.id,
-        name: c.name,
-        nameTe: c.nameTe,
-        nameHi: c.nameHi,
-        unit: c.unit,
-        pricePerUnit: c.pricePerUnit,
-        available: c.available,
-        minOrderQty: c.minOrderQty,
+      const ref = db.collection("wholesalers").doc(w.id).collection("catalog").doc();
+      batch.set(ref, {
+        wholesalerId: w.id, name: c.name,
+        nameTe: c.nameTe, nameHi: c.nameHi,
+        unit: c.unit, pricePerUnit: c.pricePerUnit,
+        available: c.available, minOrderQty: c.minOrderQty,
         offer: c.offer ?? null,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     }
+    await batch.commit();
   }
   return { seeded: true, count: SEED.length };
 }

@@ -11,19 +11,15 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 async function main() {
-  if (process.env.DATABASE_URL) {
-    try {
-      const result = await seedIfEmpty();
-      if (result.seeded) {
-        logger.info({ count: result.count }, "Seeded wholesalers + catalog");
-      } else {
-        logger.info("DB already seeded — skipping");
-      }
-    } catch (err: any) {
-      logger.error({ err: err?.message }, "Seed failed (tables may not exist yet — run `pnpm --filter @workspace/db run push`)");
+  try {
+    const result = await seedIfEmpty();
+    if (result.seeded) {
+      logger.info({ count: result.count }, "Seeded wholesalers + catalog into Firestore");
+    } else {
+      logger.info("Firestore already seeded — skipping");
     }
-  } else {
-    logger.warn("DATABASE_URL not set — server running in degraded mode (orders will not persist)");
+  } catch (err: any) {
+    logger.error({ err: err?.message }, "Seed failed");
   }
 
   app.listen(port, (err) => {

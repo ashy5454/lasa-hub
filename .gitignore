@@ -53,6 +53,9 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Firebase service account — contains private key, never commit
+**/firebase-service-account.json
+
 # Local dev artifacts — never commit
 .dev-logs/
 artifacts/api-server/test-gemini.js
