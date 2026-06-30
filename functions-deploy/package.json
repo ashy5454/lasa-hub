@@ -1,0 +1,17 @@
+{
+  "name": "lasa-hub-functions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "functions.mjs",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "cors": "^2",
+    "express": "^5",
+    "firebase-admin": "^14.1.0",
+    "firebase-functions": "^7.2.5",
+    "pino": "^9",
+    "pino-http": "^10"
+  }
+}

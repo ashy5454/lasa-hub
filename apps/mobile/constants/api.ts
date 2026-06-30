@@ -6,12 +6,14 @@ function getApiBase(): string {
 
   if (Platform.OS === "web" && typeof window !== "undefined") {
     const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") return "http://localhost:8080";
     if (host.includes("replit.dev") || host.includes("janeway")) {
       const match = host.match(
         /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(\d+)-(.+)$/i,
       );
       if (match) return `https://${match[1]}-8080-${match[3]}`;
     }
+    return ""; // Firebase Hosting — same origin, /api/** rewritten to Cloud Function
   }
   return "http://localhost:8080";
 }

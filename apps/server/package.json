@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "dist/functions.mjs",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx watch index.ts",
     "build": "node ./build.mjs",
@@ -17,6 +18,7 @@
     "dotenv": "^16.4.7",
     "express": "^5",
     "firebase-admin": "^14.1.0",
+    "firebase-functions": "^7.2.5",
     "pino": "^9",
     "pino-http": "^10"
   },
