@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "Lasa Hub"
+version = "1.0.0"
+id = "artifacts/lasa-hub"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 21611
+
+[services.development]
+run = "pnpm --filter @workspace/lasa-hub run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lasa-hub", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/lasa-hub", "run", "serve" ]
+
+[services.env]
+PORT = "21611"
+BASE_PATH = "/"

@@ -1,0 +1,76 @@
+Project Overview:
+Generate a complete, mobile-first full-stack web app called "Lasa Hub". The platform connects rural Indian Kirana shop owners with their trusted wholesale suppliers to digitize their B2B supply chain.
+
+Tech Stack Requirements:
+
+Frontend: Next.js (React) optimized for mobile touchscreens.
+
+Backend: Next.js API Routes (Serverless functions) or an Express.js server.
+
+Database: MongoDB (use Mongoose for schema modeling).
+
+External APIs: Twilio API (for both Login OTPs and Order Notifications) and Gemini API (for Vision AI handwriting analysis and Audio processing).
+
+Database Architecture (MongoDB Collections):
+
+Users: Store user profiles (Phone number, Role: 'kirana' or 'wholesaler', TrustedWholesalerID).
+
+OTPs: Temporary collection to store generated login OTPs, phone numbers, and expiration timestamps.
+
+Orders: Store order details (KiranaID, WholesalerID, Items List, Status, Total Amount, Timestamps).
+
+Inventory: Store wholesale stock status (Item Name, Available: Boolean, WholesalerID).
+
+Design Philosophy & Theme:
+
+Target Audience: Rural Indian shop owners with very low digital literacy. The design must be ultra-minimalist and extremely intuitive.
+
+Languages: Support placeholders for Telugu, Hindi, and English. No corporate jargon.
+
+Color Palette: Primary Color is a warm, vibrant Red. Backgrounds should be clean White. Accents and secondary elements use earthy Brown tones.
+
+Interaction: Maximum target areas for buttons. Soft rounded corners. One or two clicks to complete any action.
+
+User Flow 1: Kirana Shop Owner Interface (Mobile First)
+
+Screen 1 - Custom OTP Login: A simple white screen with the red Lasa Hub logo. One large input field for Mobile Number and a red button saying "Get OTP". Backend Logic: Generate a random 4-digit code, save it to the MongoDB OTPs collection, and use Twilio to send it via SMS. Follow this with a 4-digit OTP entry screen that verifies against the MongoDB record.
+
+Screen 2 - The Home Screen: A welcoming greeting. The center features two massive, easily tappable buttons:
+
+A large Camera icon with text "Scan Written List".
+
+A large Microphone icon with text "Record Voice Order" (Visual recording state must be prominent).
+
+Bottom Navigation: "Home" tab and an "Orders" tab.
+
+Floating Action Button: A brown circular button with a microphone icon for "Voice Feedback".
+
+Screen 3 - AI Order Review & Send: CRITICAL LOGIC: When the user uploads an image of a handwritten note or a voice audio file, pass it through the Gemini API to extract the items and quantities. Display this as a clean digitized list. Query the MongoDB Inventory collection to show a traffic light indicator next to each item (Green dot for available, Red dot for unavailable at their assigned wholesaler). Provide a large red "Send Order" button that saves the order to MongoDB.
+
+Screen 4 - Orders Tab: A clean list of past orders fetched from MongoDB. Tapping a confirmed order shows the exact confirmation details and invoice image sent by the wholesaler.
+
+User Flow 2: Wholesale Owner Interface (Tablet/Desktop Dashboard)
+
+Screen 1 - Wholesaler Dashboard: A clean real-time list of incoming orders from various Kirana shops, fetched from the Orders collection. Each card shows the shop name, time of order, and a "View List" button.
+
+Screen 2 - Order Fulfillment & Reply: A detailed view of the submitted list. Simple input fields at the bottom to add Total Amount, Discount applied, and Expected Delivery Time. Include an "Attach Invoice Image" button.
+
+Screen 3 - Send Confirmation to SMS: A final submit button. CRITICAL LOGIC: When clicked, update the order status in MongoDB, and trigger the Twilio API to automatically send a WhatsApp/SMS alert directly to the Kirana owner's phone containing the order summary, delivery time, and invoice link.
+
+Environment Setup Instructions:
+Structure the backend so I can easily input my credentials in a .env file: MONGODB_URI, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, and GEMINI_API_KEY. Please generate the necessary Mongoose models first.
+
+Your Immediate Next Steps for MongoDB Setup:
+Since you are using Replit, linking a database is incredibly fast.
+
+Go to MongoDB Atlas and create a free account.
+
+Deploy a Free "M0" Cluster.
+
+Under "Database Access," create a database user with a username and password.
+
+Under "Network Access," click "Add IP Address" and select "Allow Access from Anywhere" (this is required so Replit's cloud servers can talk to your database).
+
+Click "Connect" on your cluster, choose "Drivers," and copy the connection string. It will look something like this: mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority
+
+In your Replit Secrets (the padlock icon on the left menu), add a secret named MONGODB_URI and paste that string in (make sure to replace <username> and <password> with the ones you just created).

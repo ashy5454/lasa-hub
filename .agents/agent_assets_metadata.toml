@@ -1,0 +1,14 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "3j82oe9R6iYqQxAwg1Lyk"
+uri = "file://artifacts/lasa-hub/assets/images/icon.png"
+type = "image"
+title = "lasa hub app icon"
+
+[[generated]]
+id = "0RCQx1OkHAkDe9XZ30x8G"
+uri = "file://artifacts/lasa-hub/assets/images/splash.png"
+type = "image"
+title = "lasa hub splash"
