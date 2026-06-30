@@ -20,8 +20,9 @@ import { useLanguage } from "@/context/LanguageContext";
 import { useColors } from "@/hooks/useColors";
 import { LANGUAGES, type Language } from "@/constants/translations";
 import { LasaLogo } from "@/components/LasaLogo";
+import { apiGet } from "@/constants/api";
 
-type Step = "language" | "role" | "phone" | "otp" | "name";
+type Step = "language" | "phone" | "otp" | "role" | "name";
 
 export default function LoginScreen() {
   const colors = useColors();
@@ -39,12 +40,6 @@ export default function LoginScreen() {
   const handleLanguageSelect = async (lang: Language) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await setLanguage(lang);
-    setStep("role");
-  };
-
-  const handleRoleSelect = (role: UserRole) => {
-    setRole(role);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setStep("phone");
   };
 
@@ -60,16 +55,9 @@ export default function LoginScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStep("otp");
     } catch (err: any) {
-      // Server returns a precise message + retryAfterSec for each rate-limit
-      // reason (cooldown / phone_limit / ip_limit). Prefer the server message
-      // verbatim — it's already user-friendly and tells the user exactly how
-      // long to wait. Only fall back to a generic message when nothing came
-      // through (e.g. network down).
       const msg = String(err?.message ?? "");
       if (msg) {
         setError(msg);
-      } else if (/network|fetch|failed to fetch/i.test(msg)) {
-        setError("Couldn't reach the server. Check your internet and try again.");
       } else {
         setError("Couldn't send OTP. Please try again.");
       }
@@ -94,19 +82,14 @@ export default function LoginScreen() {
       return;
     }
 
+    // OTP verified — check if user already exists
     try {
-      const { user: existingUser } = await import("@/constants/api").then(m => m.apiGet<{ user: import("@/context/AuthContext").User }>(`/api/users/${encodeURIComponent(phone)}`));
-      if (existingUser) {
-        if (existingUser.role !== selectedRole) {
-          setLoading(false);
-          setError(`This number is registered as a ${existingUser.role}. Please switch roles on the first screen.`);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          return;
-        }
+      const { user: existingUser } = await apiGet<{ user: any }>(`/api/users/${encodeURIComponent(phone)}`);
+      if (existingUser?.name) {
         await loginExistingUser(existingUser);
         setLoading(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (selectedRole === "wholesaler") {
+        if (existingUser.role === "wholesaler") {
           router.replace("/wholesaler" as any);
         } else {
           router.replace("/(tabs)");
@@ -114,11 +97,17 @@ export default function LoginScreen() {
         return;
       }
     } catch {
-      // User doesn't exist or network error, proceed to name step
+      // New user or server unreachable — proceed to onboarding
     }
 
     setLoading(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setStep("role");
+  };
+
+  const handleRoleSelect = (role: UserRole) => {
+    setRole(role);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setStep("name");
   };
 
@@ -140,7 +129,6 @@ export default function LoginScreen() {
   const nameLabel = language === "te" ? "మీ పేరు" : language === "hi" ? "आपका नाम" : "Your Name";
   const namePlaceholder = language === "te" ? "పేరు వేయండి" : language === "hi" ? "नाम डालें" : "Enter your name";
   const nameBtn = language === "te" ? "ముందుకు వెళ్ళండి" : language === "hi" ? "आगे बढ़ें" : "Continue";
-  const nameGreeting = language === "te" ? "OTP ధృవీకరించబడింది! మీ పేరు వేయండి." : language === "hi" ? "OTP सही है! अपना नाम डालें।" : "OTP verified! Please enter your name.";
 
   return (
     <KeyboardAvoidingView
@@ -155,13 +143,6 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Logo — extra-large on the language step (the very first
-            screen a new user sees) and still generous on subsequent
-            steps. Sizes are bumped beyond the visible artwork because
-            the JPEG has white padding around the sticker that
-            resizeMode="contain" preserves — so a 220px container only
-            shows ~140px of actual red sticker. Tune these numbers if
-            the source artwork is ever re-exported with a tighter crop. */}
         <Animated.View entering={FadeInDown.delay(80).springify()} style={styles.logoSection}>
           <LasaLogo size={step === "language" ? 220 : 150} />
           <Text style={[styles.appName, { color: colors.primary }]}>Lasa Hub</Text>
@@ -202,41 +183,10 @@ export default function LoginScreen() {
           </Animated.View>
         )}
 
-        {/* ── Step 1: Role ── */}
-        {step === "role" && (
-          <Animated.View entering={FadeInUp.springify()} style={styles.stepBox}>
-            <Text style={[styles.stepTitle, { color: colors.foreground }]}>{t("whoAreYou")}</Text>
-            <TouchableOpacity
-              style={[styles.roleBtn, { backgroundColor: colors.primary }]}
-              onPress={() => handleRoleSelect("kirana")}
-              activeOpacity={0.85}
-            >
-              <Feather name="home" size={30} color="#FFF" />
-              <Text style={styles.roleBtnText}>{t("kiranaDukaan")}</Text>
-              <Text style={styles.roleBtnSub}>{t("iOrderGoods")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.roleBtn, { backgroundColor: colors.accent }]}
-              onPress={() => handleRoleSelect("wholesaler")}
-              activeOpacity={0.85}
-            >
-              <Feather name="truck" size={30} color="#FFF" />
-              <Text style={styles.roleBtnText}>{t("wholesaleDukaan")}</Text>
-              <Text style={styles.roleBtnSub}>{t("iFulfillOrders")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setStep("language")} style={styles.backLink}>
-              <Feather name="globe" size={14} color={colors.mutedForeground} />
-              <Text style={[styles.backLinkText, { color: colors.mutedForeground }]}>
-                {language === "te" ? "భాష మార్చు" : language === "hi" ? "भाषा बदलें" : "Change language"}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* ── Step 2: Phone ── */}
+        {/* ── Step 1: Phone ── */}
         {step === "phone" && (
           <Animated.View entering={FadeInUp.springify()} style={styles.stepBox}>
-            <TouchableOpacity onPress={() => setStep("role")} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => setStep("language")} style={styles.backBtn}>
               <Feather name="arrow-left" size={22} color={colors.mutedForeground} />
             </TouchableOpacity>
             <Text style={[styles.stepTitle, { color: colors.foreground }]}>{t("enterMobile")}</Text>
@@ -268,7 +218,7 @@ export default function LoginScreen() {
           </Animated.View>
         )}
 
-        {/* ── Step 3: OTP ── */}
+        {/* ── Step 2: OTP ── */}
         {step === "otp" && (
           <Animated.View entering={FadeInUp.springify()} style={styles.stepBox}>
             <TouchableOpacity onPress={() => setStep("phone")} style={styles.backBtn}>
@@ -304,14 +254,47 @@ export default function LoginScreen() {
           </Animated.View>
         )}
 
-        {/* ── Step 4: Name ── */}
+        {/* ── Step 3: Role (new users only) ── */}
+        {step === "role" && (
+          <Animated.View entering={FadeInUp.springify()} style={styles.stepBox}>
+            <Text style={[styles.stepTitle, { color: colors.foreground }]}>{t("whoAreYou")}</Text>
+            <Text style={[styles.stepSub, { color: colors.mutedForeground }]}>
+              {language === "te" ? "మీరు ఎవరు?" : language === "hi" ? "आप कौन हैं?" : "Tell us about your business"}
+            </Text>
+            <TouchableOpacity
+              style={[styles.roleBtn, { backgroundColor: colors.primary }]}
+              onPress={() => handleRoleSelect("kirana")}
+              activeOpacity={0.85}
+            >
+              <Feather name="home" size={30} color="#FFF" />
+              <Text style={styles.roleBtnText}>{t("kiranaDukaan")}</Text>
+              <Text style={styles.roleBtnSub}>{t("iOrderGoods")}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.roleBtn, { backgroundColor: colors.accent }]}
+              onPress={() => handleRoleSelect("wholesaler")}
+              activeOpacity={0.85}
+            >
+              <Feather name="truck" size={30} color="#FFF" />
+              <Text style={styles.roleBtnText}>{t("wholesaleDukaan")}</Text>
+              <Text style={styles.roleBtnSub}>{t("iFulfillOrders")}</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        )}
+
+        {/* ── Step 4: Name (new users only) ── */}
         {step === "name" && (
           <Animated.View entering={FadeInUp.springify()} style={styles.stepBox}>
+            <TouchableOpacity onPress={() => setStep("role")} style={styles.backBtn}>
+              <Feather name="arrow-left" size={22} color={colors.mutedForeground} />
+            </TouchableOpacity>
             <View style={[styles.nameSuccessIcon, { backgroundColor: colors.available + "18" }]}>
               <Feather name="check-circle" size={40} color={colors.available} />
             </View>
             <Text style={[styles.stepTitle, { color: colors.foreground }]}>{nameLabel}</Text>
-            <Text style={[styles.stepSub, { color: colors.mutedForeground }]}>{nameGreeting}</Text>
+            <Text style={[styles.stepSub, { color: colors.mutedForeground }]}>
+              {language === "te" ? "మీ వ్యాపార పేరు వేయండి" : language === "hi" ? "अपना नाम डालें" : "What's your name?"}
+            </Text>
             <TextInput
               style={[styles.nameInput, { borderColor: colors.primary, color: colors.foreground, backgroundColor: colors.card }]}
               placeholder={namePlaceholder}
@@ -347,7 +330,6 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   scroll: { flexGrow: 1, paddingHorizontal: 24, justifyContent: "center" },
   logoSection: { alignItems: "center", marginBottom: 40 },
-  logoCircle: { width: 80, height: 80, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   appName: { fontSize: 32, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
   tagline: { fontSize: 15, fontFamily: "Inter_400Regular", marginTop: 4 },
   stepBox: { gap: 14 },
@@ -356,8 +338,6 @@ const styles = StyleSheet.create({
   langNative: { fontSize: 22, fontFamily: "Inter_700Bold", flex: 1 },
   langEnglish: { fontSize: 14, fontFamily: "Inter_400Regular" },
   backBtn: { marginBottom: 4, alignSelf: "flex-start" },
-  backLink: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", paddingTop: 4 },
-  backLinkText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   stepTitle: { fontSize: 24, fontFamily: "Inter_700Bold", lineHeight: 32 },
   stepSub: { fontSize: 14, fontFamily: "Inter_400Regular" },
   roleBtn: { borderRadius: 16, padding: 22, alignItems: "center", gap: 8 },
@@ -371,9 +351,6 @@ const styles = StyleSheet.create({
   primaryBtn: { height: 58, borderRadius: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, marginTop: 4 },
   primaryBtnText: { color: "#FFF", fontSize: 18, fontFamily: "Inter_700Bold" },
   hint: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center" },
-  otpPreviewBox: { borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "center" },
-  otpPreviewLabel: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  otpPreviewCode: { fontSize: 22, fontFamily: "Inter_700Bold", letterSpacing: 4 },
   otpInput: { height: 72, borderWidth: 2, borderRadius: 16, fontSize: 32, fontFamily: "Inter_700Bold", letterSpacing: 12 },
   resendBtn: { alignItems: "center", paddingVertical: 8 },
   resendText: { fontSize: 14, fontFamily: "Inter_500Medium" },
