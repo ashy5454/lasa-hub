@@ -5,10 +5,19 @@ import { logger } from "../lib/logger";
 import { isItemInCatalog } from "../lib/catalogMatchServer";
 import { normalizePhone } from "../lib/phone";
 import { getActor } from "../lib/actor";
+import { sendOrderSMS } from "../lib/sms";
+
+function toMillis(ts: any): number {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (ts._seconds != null) return ts._seconds * 1000;
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
 
 const router = Router();
 
-type Status = "pending" | "confirmed" | "out_for_delivery" | "delivered" | "cancelled";
+type Status = "pending" | "confirmed" | "packed" | "out_for_delivery" | "delivered" | "cancelled";
 
 function parseQty(v: string): number {
   const m = String(v ?? "").match(/(\d+(\.\d+)?)/);
@@ -165,6 +174,17 @@ router.post("/orders", async (req, res) => {
       await batch.commit();
     }
 
+    // SMS to wholesaler — fire-and-forget
+    const wsDoc = await db.collection("wholesalers").doc(body.wholesalerId).get();
+    const wsPhone = wsDoc.data()?.ownerPhone as string | undefined;
+    const itemSummary = body.items.slice(0, 3).map(i => `${i.name} ${i.quantity}`).join(", ");
+    const more = body.items.length > 3 ? ` +${body.items.length - 3} more` : "";
+    if (wsPhone) {
+      sendOrderSMS(wsPhone, `New order from ${body.shopName} (${body.items.length} items): ${itemSummary}${more}. Review: lasahub.web.app`).catch(() => {});
+    }
+    // SMS to kirana — fire-and-forget
+    sendOrderSMS(body.kiranaPhone, `Order placed to ${wsDoc.data()?.name ?? "wholesaler"} (${body.items.length} items). We'll notify you when confirmed. Track: lasahub.web.app`).catch(() => {});
+
     res.json({ order: { ...orderData, items: body.items } });
   } catch (err: any) {
     logger.error({ err: err?.message }, "Create order failed");
@@ -180,11 +200,13 @@ router.get("/orders/by-kirana/:phone", async (req, res) => {
       res.status(403).json({ error: "Unauthorized for this kirana orders list" });
       return;
     }
+    // No .orderBy() — avoids composite index requirement. Sort in memory.
     const snap = await db.collection("orders")
       .where("kiranaPhone", "==", String(req.params.phone))
-      .orderBy("createdAt", "desc")
       .get();
-    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const docs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as any))
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
     const itemsMap = await hydrateOrders(docs);
     res.json({ orders: docs.map(d => enrichOrder(d, itemsMap.get(d.id) ?? [])) });
   } catch (err: any) {
@@ -210,13 +232,16 @@ router.get("/orders/by-wholesaler/:id", async (req, res) => {
     const sinceRaw = req.query.since as string | undefined;
     const since = sinceRaw ? new Date(sinceRaw) : null;
 
-    // Firestore `in` supports up to 30 items — aliases are always 1–3
-    let query = db.collection("orders").where("wholesalerId", "in", aliases);
+    // No .orderBy() — avoids composite index requirement. Sort in memory.
+    // Firestore `in` supports up to 30 items — aliases are always 1–3.
+    let query: any = db.collection("orders").where("wholesalerId", "in", aliases);
     if (since && !isNaN(since.getTime())) {
-      query = query.where("updatedAt", ">", Timestamp.fromDate(since)) as any;
+      query = query.where("updatedAt", ">", Timestamp.fromDate(since));
     }
-    const snap = await (query as any).orderBy("createdAt", "desc").get();
-    const docs = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const snap = await query.get();
+    const docs = snap.docs
+      .map((d: any) => ({ id: d.id, ...d.data() }))
+      .sort((a: any, b: any) => toMillis(b.createdAt) - toMillis(a.createdAt));
     const itemsMap = await hydrateOrders(docs);
     res.json({ orders: docs.map((d: any) => enrichOrder(d, itemsMap.get(d.id) ?? [])) });
   } catch (err: any) {
@@ -281,7 +306,7 @@ router.patch("/orders/:id", async (req, res) => {
 
     const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
     if (body.status) {
-      const allowed: Status[] = ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"];
+      const allowed: Status[] = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"];
       if (!allowed.includes(body.status)) { res.status(400).json({ error: "Invalid status" }); return; }
       patch.status = body.status;
     }
@@ -326,6 +351,22 @@ router.patch("/orders/:id", async (req, res) => {
     const updatedData = { id: updated.id, ...updated.data() } as any;
     const itemsSnap = await orderRef.collection("items").get();
     const items = itemsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // SMS to kirana on status change
+    if (body.status && body.status !== existingData.status) {
+      const statusMsg: Record<string, string> = {
+        confirmed: "confirmed your order",
+        packed: "packed your order — getting ready to dispatch",
+        out_for_delivery: "dispatched your order — on the way!",
+        delivered: "marked your order as delivered. Thank you!",
+        cancelled: "cancelled your order. Contact them for details.",
+      };
+      const msg = statusMsg[body.status];
+      if (msg && existingData.kiranaPhone) {
+        sendOrderSMS(existingData.kiranaPhone, `Order update: ${existingData.shopName ?? "Wholesaler"} has ${msg} Track: lasahub.web.app`).catch(() => {});
+      }
+    }
+
     res.json({ order: enrichOrder(updatedData, items) });
   } catch (err: any) {
     logger.error({ err: err?.message }, "Patch order failed");

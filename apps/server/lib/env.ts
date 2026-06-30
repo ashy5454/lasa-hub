@@ -26,6 +26,7 @@ const KNOWN_KEYS = new Set([
   "AI_RPM_PER_IP", "AI_RPD_TOTAL",
   "OTP_RPM_PER_PHONE", "OTP_RESEND_COOLDOWN_SEC", "OTP_PER_HOUR_PER_IP",
   "TWILIO_DAILY_LIMIT",
+  "FAST2SMS_API_KEY",
 ]);
 
 // Tiny string-distance check so "SHOW_OTP_IN_RESPONS" gets flagged as

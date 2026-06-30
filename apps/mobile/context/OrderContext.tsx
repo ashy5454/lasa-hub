@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { apiGet, apiPatch, apiPost, getUserHeaders } from "@/constants/api";
 import { useAuth } from "./AuthContext";
 
-export type OrderStatus = "pending" | "confirmed" | "out_for_delivery" | "delivered" | "cancelled";
+export type OrderStatus = "pending" | "confirmed" | "packed" | "out_for_delivery" | "delivered" | "cancelled";
 
 export interface OrderItem {
   name: string;
